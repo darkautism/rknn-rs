@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "rknn_api.h": "c",
+        "string.h": "c",
+        "sentencepiece_processor.h": "c",
+        "new": "cpp"
+    }
+}

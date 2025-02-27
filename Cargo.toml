@@ -1,0 +1,14 @@
+[package]
+name = "rknn-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytemuck = "1.21.0"
+
+[build-dependencies]
+bindgen = "0.71.1"
+
+
+
+
