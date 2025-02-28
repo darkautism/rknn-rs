@@ -34,3 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 ```
+
+# Example project
+
+![Sense Voice Small rknn using rust](https://github.com/darkautism/sensevoice-rs)
