@@ -186,10 +186,10 @@ pub mod prelude {
         context: super::rknn_context,
     }
     impl Rknn {
-        pub fn rknn_init(model_path: &str) -> Result<Self, Error> {
+        pub fn rknn_init<P: AsRef<std::path::Path>>(model_path: P) -> Result<Self, Error> {
             let mut ret = Rknn { context: 0 };
-            let model_path_cstr = CString::new(model_path).unwrap();
-            let model_path_cstr_ptr = model_path_cstr.as_ptr();
+            let path_ref = model_path.as_ref();
+            let model_path_cstr_ptr = path_ref.to_string_lossy().as_ptr();
 
             unsafe {
                 let result = super::rknn_init(

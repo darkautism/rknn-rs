@@ -2,6 +2,9 @@
 name = "rknn-rs"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+documentation = "rknn rust binding"
+repository = "https://github.com/darkautism/rknn-rs"
 
 [dependencies]
 bytemuck = "1.21.0"
