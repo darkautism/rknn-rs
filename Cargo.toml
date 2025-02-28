@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "rknn rust binding"
-documentation = "rknn rust binding"
 repository = "https://github.com/darkautism/rknn-rs"
 
 [dependencies]
