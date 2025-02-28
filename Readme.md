@@ -6,7 +6,7 @@
 
 
 
-```
+``` Rust
 use rknn_rs::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
