@@ -18,7 +18,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: RustDoc
       run: cargo doc --verbose
-    - name: Build
+    - name: fmt
       run: cargo fmt --verbose
     - name: Build
       run: cargo build --verbose
