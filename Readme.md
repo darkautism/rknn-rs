@@ -1,4 +1,4 @@
-# RKNN for rust
+# RKNN for rust [![dependency status](https://deps.rs/repo/github/darkautism/rknn-rs/status.svg)](https://deps.rs/repo/github/darkautism/rknn-rs)
 
 唉，為什麼又要發明輪子
 
