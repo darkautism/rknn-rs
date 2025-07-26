@@ -320,13 +320,13 @@ pub mod prelude {
         /// If successful, returns an `Rknn` instance; otherwise, returns an `Error`.
         pub fn rknn_init<P: AsRef<std::path::Path>>(model_path: P) -> Result<Self, Error> {
             let mut ret = Rknn { context: 0 };
-            let path_ref = model_path.as_ref();
-            let model_path_cstr_ptr = path_ref.to_string_lossy().as_ptr();
+            let path_str = model_path.as_ref().to_string_lossy();
+            let path_cstr = CString::new(path_str.as_ref()).unwrap();
 
             unsafe {
                 let result = super::rknn_init(
                     &mut ret.context,
-                    model_path_cstr_ptr as *mut std::ffi::c_void,
+                    path_cstr.as_ptr() as *mut std::ffi::c_void,
                     0,
                     0,
                     null_mut(),
