@@ -10,7 +10,7 @@ repository = "https://github.com/darkautism/rknn-rs"
 bytemuck = "1.23.1"
 
 [build-dependencies]
-bindgen = "0.71.1"
+bindgen = "0.72.0"
 
 
 
