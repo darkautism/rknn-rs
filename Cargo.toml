@@ -7,7 +7,7 @@ description = "rknn rust binding"
 repository = "https://github.com/darkautism/rknn-rs"
 
 [dependencies]
-bytemuck = "1.23.2"
+bytemuck = "1.24.0"
 
 [build-dependencies]
 bindgen = "0.72.0"
