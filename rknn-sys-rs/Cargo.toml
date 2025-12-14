@@ -1,0 +1,13 @@
+[package]
+name = "rknn-sys-rs"
+version = "0.1.0"
+edition = "2021"
+description = "FFI bindings for Rockchip RKNN"
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "0.72.0"
+
+[features]
+rknnmrt = []
