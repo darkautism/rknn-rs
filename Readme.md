@@ -1,37 +1,45 @@
 # RKNN for rust [![dependency status](https://deps.rs/repo/github/darkautism/rknn-rs/status.svg)](https://deps.rs/repo/github/darkautism/rknn-rs)
 
-唉，為什麼又要發明輪子
+## Features
 
-遷移至 0.2.0會遇到API變更，詳情請見Change log
+  * **Rusty API**: Encapsulates the C-based `rknn_api` into safe Rust structs and methods.
+  * **Resource Management**: Implements resource release mechanisms to prevent memory leaks.
+
+## Changelog
+
+Migrating to version 0.2.0 involves API changes. Please refer to the Change log for details.
 
 [Changelog](CHANGELOG.md)
 
-# rknnmrt support
+## rknnmrt support
 
-Just add rknnmrt feature gate into your Cargo.toml.
+Just add the `rknnmrt` feature gate into your `Cargo.toml`.
 
-# Example
+## Example
 
-``` Rust
+```rust
 use rknn_rs::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rknn = Rknn::rknn_init("/home/kautism/SenseVoiceSmall-RKNN2/sense-voice-encoder.rknn")?;
     rknn.input_set(&mut RknnInput {
-        index: 0,             // 根據您的輸入索引設定
-        buf: flattened_input, /* 您的數據 */
-        pass_through: false,  // 通常設為 false，除非模型需要特殊處理
+        index: 0,                     // Set according to your input index
+        buf: flattened_input,         /* Your data */
+        pass_through: false,          // Usually false, unless the model requires special handling
         type_: RknnTensorType::Float32,
         fmt: RknnTensorFormat::NCHW,
     })?;
 
     let mut asr_output = rknn.outputs_get::<f32>()?;
-    // Use data d something
+    // Do something with the data
     Ok(())
 }
-
 ```
 
-# Example project
+## LICENSE
 
-![Sense Voice Small rknn using rust](https://github.com/darkautism/sensevoice-rs)
+MIT
+
+## Contributing
+
+Issues and Pull Requests are welcome\! If you find any missing API bindings or have ideas for better implementations, please feel free to share. Any contributions will be automatically covered under the MIT LICENSE.
