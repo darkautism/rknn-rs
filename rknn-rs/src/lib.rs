@@ -1,21 +1,21 @@
-#![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(dead_code)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
 
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+use rknn_sys_rs as rknn_sys;
+
+pub mod error;
 
 /// Prelude module for RKNN (Rockchip Neural Network) related functionality.
 ///
 /// This module contains commonly used types and functions for interacting with RKNN, making it convenient for use in other modules.
 pub mod prelude {
+    use super::rknn_sys;
     use std::{
-        ffi::{CStr, CString}, mem::{self, ManuallyDrop}, os::raw::c_void, ptr::null_mut, rc::Weak, slice, str, sync::Arc
+        ffi::CString, mem, os::raw::c_void, ptr::null_mut, slice, str,
     };
 
     use bytemuck::Pod;
+    pub use crate::error::Error;
+    use crate::rkerr;
 
     /// RKNN tensor attributes.
     ///
@@ -35,11 +35,11 @@ pub mod prelude {
         /// Size of the tensor in bytes.
         pub size: u32,
         /// Tensor format.
-        pub fmt: super::rknn_tensor_format,
+        pub fmt: rknn_sys::rknn_tensor_format,
         /// Tensor type.
-        pub type_: super::rknn_tensor_type,
+        pub type_: rknn_sys::rknn_tensor_type,
         /// Tensor quantization type.
-        pub qnt_type: super::rknn_tensor_qnt_type,
+        pub qnt_type: rknn_sys::rknn_tensor_qnt_type,
         /// Quantization parameter fl.
         pub fl: i8,
         /// Quantization parameter zp.
@@ -64,9 +64,9 @@ pub mod prelude {
                 name: [0; 256],
                 n_elems: 0,
                 size: 0,
-                fmt: super::rknn_tensor_format::default(),
-                type_: super::rknn_tensor_type::default(),
-                qnt_type: super::rknn_tensor_qnt_type::default(),
+                fmt: rknn_sys::rknn_tensor_format::default(),
+                type_: rknn_sys::rknn_tensor_type::default(),
+                qnt_type: rknn_sys::rknn_tensor_qnt_type::default(),
                 fl: 0,
                 zp: 0,
                 scale: 0.0,
@@ -92,9 +92,9 @@ pub mod prelude {
         /// Whether to pass through.
         pub pass_through: u8,
         /// Input data type.
-        pub type_: super::rknn_tensor_type,
+        pub type_: rknn_sys::rknn_tensor_type,
         /// Input data format.
-        pub fmt: super::rknn_tensor_format,
+        pub fmt: rknn_sys::rknn_tensor_format,
     }
 
     impl Default for _rknn_input {
@@ -104,8 +104,8 @@ pub mod prelude {
                 buf: null_mut(),
                 size: 0,
                 pass_through: 1,
-                fmt: super::rknn_tensor_format::default(),
-                type_: super::rknn_tensor_type::default(),
+                fmt: rknn_sys::rknn_tensor_format::default(),
+                type_: rknn_sys::rknn_tensor_type::default(),
             }
         }
     }
@@ -229,41 +229,38 @@ pub mod prelude {
         }
     }
 
-    /// Error type for RKNN operations.
-    #[derive(Debug)]
-    pub struct Error(String);
-    impl std::fmt::Display for Error {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{}", self.0)
-        }
-    }
-    impl std::error::Error for Error {
-        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-            None
-        }
-
-        fn description(&self) -> &str {
-            "description() is deprecated; use Display"
-        }
-
-        fn cause(&self) -> Option<&dyn std::error::Error> {
-            self.source()
-        }
-    }
-
-    macro_rules! rkerr {
-        ($msg:expr, $code:expr) => {
-            Err(Error(format!("{} exit code:{}", $msg, $code)))
-        };
-    }
-
     /// RKNN output structure.
     ///
     /// This struct holds the output data of an RKNN model and includes internal structures for resource release.
-    pub struct RknnOutput<T> {
-        /// Output data.
-        pub data: Box<ManuallyDrop<Vec<T>>>,
-        for_release: [super::rknn_output;1],
+    /// It implements `Drop` to automatically release resources.
+    pub struct RknnOutput<'a, T> {
+        context: rknn_sys::rknn_context,
+        memory: &'a [T],
+        raw: rknn_sys::rknn_output,
+    }
+
+    impl<'a, T> Drop for RknnOutput<'a, T> {
+        fn drop(&mut self) {
+            unsafe {
+                rknn_sys::rknn_outputs_release(self.context, 1, &mut self.raw);
+            }
+        }
+    }
+
+    impl<'a, T> std::ops::Deref for RknnOutput<'a, T> {
+        type Target = [T];
+        fn deref(&self) -> &Self::Target {
+            self.memory
+        }
+    }
+
+    impl<'a, T: std::fmt::Debug> std::fmt::Debug for RknnOutput<'a, T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("RknnOutput")
+                .field("context", &self.context)
+                .field("memory", &self.memory)
+                .finish()
+        }
     }
 
     /// RKNN model.
@@ -304,9 +301,17 @@ pub mod prelude {
     /// }
     /// ```
     #[doc = "Rknn model"]
-    #[derive(Debug, Clone)]
+    #[derive(Debug)]
     pub struct Rknn {
-        context: super::rknn_context,
+        context: rknn_sys::rknn_context,
+    }
+
+    impl Drop for Rknn {
+        fn drop(&mut self) {
+            if self.context != 0 {
+                unsafe { rknn_sys::rknn_destroy(self.context) };
+            }
+        }
     }
     impl Rknn {
         /// Initialize an RKNN model.
@@ -321,10 +326,11 @@ pub mod prelude {
         pub fn rknn_init<P: AsRef<std::path::Path>>(model_path: P) -> Result<Self, Error> {
             let mut ret = Rknn { context: 0 };
             let path_str = model_path.as_ref().to_string_lossy();
-            let path_cstr = CString::new(path_str.as_ref()).unwrap();
+            let path_cstr = CString::new(path_str.as_ref())
+                .map_err(|e| Error(format!("Invalid model path: {}", e)))?;
 
             unsafe {
-                let result = super::rknn_init(
+                let result = rknn_sys::rknn_init(
                     &mut ret.context,
                     path_cstr.as_ptr() as *mut std::ffi::c_void,
                     0,
@@ -338,19 +344,6 @@ pub mod prelude {
             Ok(ret)
         }
 
-        /// Destroy an RKNN model.
-        ///
-        /// # Returns
-        ///
-        /// If successful, returns `Ok(()`; otherwise, returns an `Error`.
-        pub fn destroy(&self) -> Result<(), Error> {
-            let result = unsafe { super::rknn_destroy(self.context) };
-            if result != 0 {
-                return rkerr!("rknn_destroy faild.", result);
-            }
-            Ok(())
-        }
-
         /// Set the model's input.
         ///
         /// # Parameters
@@ -362,7 +355,7 @@ pub mod prelude {
         /// If successful, returns `Ok(()`; otherwise, returns an `Error`.
         pub fn input_set<T: Pod + 'static>(&self, input: &mut RknnInput<T>) -> Result<(), Error> {
             let total_bytes = (input.buf.len() * mem::size_of::<T>()) as u32;
-            let mut c_input = super::rknn_input {
+            let mut c_input = rknn_sys::rknn_input {
                 index: input.index as u32,
                 buf: input.buf.as_mut_ptr() as *mut c_void,
                 size: total_bytes,
@@ -371,7 +364,7 @@ pub mod prelude {
                 fmt: input.fmt as u32,
             };
 
-            let result = unsafe { super::rknn_inputs_set(self.context, 1, &mut c_input) };
+            let result = unsafe { rknn_sys::rknn_inputs_set(self.context, 1, &mut c_input) };
             if result != 0 {
                 return rkerr!("rknn_inputs_set failed.", result);
             }
@@ -384,7 +377,7 @@ pub mod prelude {
         ///
         /// If successful, returns `Ok(()`; otherwise, returns an `Error`.
         pub fn run(&self) -> Result<(), Error> {
-            let result = unsafe { super::rknn_run(self.context, null_mut()) };
+            let result = unsafe { rknn_sys::rknn_run(self.context, null_mut()) };
             if result != 0 {
                 return rkerr!("rknn_run faild.", result);
             }
@@ -399,17 +392,17 @@ pub mod prelude {
         ///
         /// If successful, returns `Ok(()`; otherwise, returns an `Error`.
         pub fn info(&self) -> Result<(), Error> {
-            let mut io_num = super::_rknn_input_output_num {
+            let mut io_num = rknn_sys::_rknn_input_output_num {
                 n_input: 0,
                 n_output: 0,
             };
 
             let result = unsafe {
-                super::rknn_query(
+                rknn_sys::rknn_query(
                     self.context,
-                    super::_rknn_query_cmd_RKNN_QUERY_IN_OUT_NUM,
-                    &mut io_num as *mut super::_rknn_input_output_num as *mut std::ffi::c_void,
-                    mem::size_of::<super::_rknn_input_output_num>() as u32,
+                    rknn_sys::_rknn_query_cmd_RKNN_QUERY_IN_OUT_NUM,
+                    &mut io_num as *mut rknn_sys::_rknn_input_output_num as *mut std::ffi::c_void,
+                    mem::size_of::<rknn_sys::_rknn_input_output_num>() as u32,
                 )
             };
 
@@ -421,11 +414,11 @@ pub mod prelude {
                 let mut rknn_tensor_attr = _rknn_tensor_attr::default();
                 rknn_tensor_attr.index = i;
                 let result = unsafe {
-                    super::rknn_query(
+                    rknn_sys::rknn_query(
                         self.context,
-                        super::_rknn_query_cmd_RKNN_QUERY_INPUT_ATTR,
+                        rknn_sys::_rknn_query_cmd_RKNN_QUERY_INPUT_ATTR,
                         &mut rknn_tensor_attr as *mut _rknn_tensor_attr as *mut std::ffi::c_void,
-                        mem::size_of::<super::_rknn_tensor_attr>() as u32,
+                        mem::size_of::<rknn_sys::_rknn_tensor_attr>() as u32,
                     )
                 };
                 println!("{:?}", rknn_tensor_attr);
@@ -438,11 +431,11 @@ pub mod prelude {
                 let mut rknn_tensor_attr = _rknn_tensor_attr::default();
                 rknn_tensor_attr.index = i;
                 let result = unsafe {
-                    super::rknn_query(
+                    rknn_sys::rknn_query(
                         self.context,
-                        super::_rknn_query_cmd_RKNN_QUERY_OUTPUT_ATTR,
+                        rknn_sys::_rknn_query_cmd_RKNN_QUERY_OUTPUT_ATTR,
                         &mut rknn_tensor_attr as *mut _rknn_tensor_attr as *mut std::ffi::c_void,
-                        mem::size_of::<super::_rknn_tensor_attr>() as u32,
+                        mem::size_of::<rknn_sys::_rknn_tensor_attr>() as u32,
                     )
                 };
                 println!("{:?}", rknn_tensor_attr);
@@ -454,94 +447,37 @@ pub mod prelude {
             Ok(())
         }
 
-        /// Get the model's output (copy version).
-        ///
-        /// This method includes built-in output resource release but copies the output data. For zero-copy, use `outputs_get_raw`.
-        ///
-        /// # Returns
-        ///
-        /// If successful, returns a `Vec<T>` containing the output data; otherwise, returns an `Error`.
-        pub fn outputs_get<T: Pod + Copy + 'static>(&self) -> Result<Vec<T>, Error> {
-            let mut out: [super::rknn_output; 1] = [super::rknn_output {
-                want_float: 1,
-                is_prealloc: 0,
-                index: 0,
-                buf: std::ptr::null_mut(),
-                size: 0,
-            }];
-            let out_ptr = out.as_mut_ptr();
-            let result =
-                unsafe { super::rknn_outputs_get(self.context, 1, out_ptr, std::ptr::null_mut()) };
-            if result != 0 {
-                return rkerr!("rknn_outputs_get faild.", result);
-            }
-            let element_size = mem::size_of::<T>();
-            let num_elements = out[0].size as usize / element_size;
-
-            let t_slice = unsafe { slice::from_raw_parts(out[0].buf as *const T, num_elements) };
-
-            // 這個動作已經copy了
-            let ret = t_slice.to_vec();
-
-            let result = unsafe { super::rknn_outputs_release(self.context, 1, out_ptr) };
-            if result != 0 {
-                return rkerr!("rknn_outputs_release faild.", result);
-            }
-            Ok(ret)
-        }
-
         /// Get the model's output (raw version).
         ///
-        /// This method returns raw output data (zero-copy) and delegates resource management to `RknnOutput<T>`. You must manually call `outputs_release` to free resources.
+        /// This method returns raw output data (zero-copy) and delegates resource management to `RknnOutput<T>`.
+        /// The returned `RknnOutput` automatically releases resources when dropped.
         ///
         /// # Returns
         ///
-        /// If successful, returns a `ManuallyDrop<RknnOutput<T>>`; otherwise, returns an `Error`.
-        pub fn outputs_get_raw<T: Pod + Copy + 'static>(&self) -> Result<ManuallyDrop<RknnOutput<T>>, Error> {
-            let mut out: [super::rknn_output; 1] = [super::rknn_output {
+        /// If successful, returns a `RknnOutput<'a, T>`; otherwise, returns an `Error`.
+        pub fn outputs_get<'a, T: Pod + Copy + 'static>(&'a self) -> Result<RknnOutput<'a, T>, Error> {
+            let mut out = rknn_sys::rknn_output {
                 want_float: 1,
                 is_prealloc: 0,
                 index: 0,
                 buf: std::ptr::null_mut(),
                 size: 0,
-            }];
+            };
             
-            let out_ptr = out.as_mut_ptr();
             let result =
-                unsafe { super::rknn_outputs_get(self.context, 1, out_ptr, std::ptr::null_mut()) };
+                unsafe { rknn_sys::rknn_outputs_get(self.context, 1, &mut out, std::ptr::null_mut()) };
             if result != 0 {
                 return rkerr!("rknn_outputs_get faild.", result);
             }
             let element_size = mem::size_of::<T>();
-            let num_elements = out[0].size as usize / element_size;
-            let t_slice = unsafe { Vec::from_raw_parts(out[0].buf as *mut T, num_elements, num_elements) };
-            let ret = ManuallyDrop::new(RknnOutput {
-                data: Box::new(ManuallyDrop::new(t_slice)),
-                for_release: out,
-            });
-            Ok(ret)
-        }
-
-        /// Release the model's output resources.
-        ///
-        /// This method releases resources associated with the output returned by `outputs_get_raw`.
-        ///
-        /// # Parameters
-        ///
-        /// - `rknnoutput`: A mutable reference to `RknnOutput<T>`.
-        ///
-        /// # Returns
-        ///
-        /// If successful, returns `Ok(()`; otherwise, returns an `Error`.
-        pub fn outputs_release<T>(&self, rknnoutput: &mut ManuallyDrop<RknnOutput<T>>) -> Result<(), Error> {
-            let mut out = rknnoutput.for_release;
-            let out_ptr = out.as_mut_ptr();
-            let result = unsafe { super::rknn_outputs_release(self.context, 1, out_ptr) };
-            unsafe { ManuallyDrop::drop(rknnoutput) };
-            if result != 0 {
-                return rkerr!("rknn_outputs_release faild.", result);
-            }
-            Ok(())
+            let num_elements = out.size as usize / element_size;
+            let t_slice = unsafe { slice::from_raw_parts(out.buf as *const T, num_elements) };
+            
+            Ok(RknnOutput {
+                context: self.context,
+                memory: t_slice,
+                raw: out,
+            })
         }
     }
 }

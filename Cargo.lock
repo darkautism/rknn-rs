@@ -193,10 +193,26 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
 name = "rknn-rs"
-version = "0.1.1"
+version = "0.2.0"
+dependencies = [
+ "bytemuck",
+ "rknn-sys-rs 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "rknn-sys-rs"
+version = "0.1.0"
 dependencies = [
  "bindgen",
- "bytemuck",
+]
+
+[[package]]
+name = "rknn-sys-rs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cb67524707e073644df4c2e5b3f5a4d704828c30339f7498d39dda1b1fe14ab"
+dependencies = [
+ "bindgen",
 ]
 
 [[package]]
