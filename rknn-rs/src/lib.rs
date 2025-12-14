@@ -1,9 +1,4 @@
-#![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(dead_code)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
 
 use rknn_sys_rs as rknn_sys;
 
@@ -15,7 +10,7 @@ pub mod error;
 pub mod prelude {
     use super::rknn_sys;
     use std::{
-        ffi::{CStr, CString}, mem::{self, ManuallyDrop}, os::raw::c_void, ptr::null_mut, rc::Weak, slice, str, sync::Arc
+        ffi::CString, mem, os::raw::c_void, ptr::null_mut, slice, str,
     };
 
     use bytemuck::Pod;
@@ -452,42 +447,6 @@ pub mod prelude {
             Ok(())
         }
 
-        /// Get the model's output (copy version).
-        ///
-        /// This method includes built-in output resource release but copies the output data. For zero-copy, use `outputs_get_raw`.
-        ///
-        /// # Returns
-        ///
-        /// If successful, returns a `Vec<T>` containing the output data; otherwise, returns an `Error`.
-        pub fn outputs_get<T: Pod + Copy + 'static>(&self) -> Result<Vec<T>, Error> {
-            let mut out: [rknn_sys::rknn_output; 1] = [rknn_sys::rknn_output {
-                want_float: 1,
-                is_prealloc: 0,
-                index: 0,
-                buf: std::ptr::null_mut(),
-                size: 0,
-            }];
-            let out_ptr = out.as_mut_ptr();
-            let result =
-                unsafe { rknn_sys::rknn_outputs_get(self.context, 1, out_ptr, std::ptr::null_mut()) };
-            if result != 0 {
-                return rkerr!("rknn_outputs_get faild.", result);
-            }
-            let element_size = mem::size_of::<T>();
-            let num_elements = out[0].size as usize / element_size;
-
-            let t_slice = unsafe { slice::from_raw_parts(out[0].buf as *const T, num_elements) };
-
-            // 這個動作已經copy了
-            let ret = t_slice.to_vec();
-
-            let result = unsafe { rknn_sys::rknn_outputs_release(self.context, 1, out_ptr) };
-            if result != 0 {
-                return rkerr!("rknn_outputs_release faild.", result);
-            }
-            Ok(ret)
-        }
-
         /// Get the model's output (raw version).
         ///
         /// This method returns raw output data (zero-copy) and delegates resource management to `RknnOutput<T>`.
@@ -496,7 +455,7 @@ pub mod prelude {
         /// # Returns
         ///
         /// If successful, returns a `RknnOutput<'a, T>`; otherwise, returns an `Error`.
-        pub fn outputs_get_raw<'a, T: Pod + Copy + 'static>(&'a self) -> Result<RknnOutput<'a, T>, Error> {
+        pub fn outputs_get<'a, T: Pod + Copy + 'static>(&'a self) -> Result<RknnOutput<'a, T>, Error> {
             let mut out = rknn_sys::rknn_output {
                 want_float: 1,
                 is_prealloc: 0,
