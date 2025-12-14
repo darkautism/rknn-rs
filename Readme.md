@@ -43,3 +43,7 @@ MIT
 ## Contributing
 
 Issues and Pull Requests are welcome\! If you find any missing API bindings or have ideas for better implementations, please feel free to share. Any contributions will be automatically covered under the MIT LICENSE.
+
+## Example project
+
+![Sense Voice Small rknn using rust](https://github.com/darkautism/sensevoice-rs)
