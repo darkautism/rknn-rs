@@ -427,7 +427,7 @@ pub mod prelude {
                 }
             }
 
-            for i in 0..io_num.n_input {
+            for i in 0..io_num.n_output {
                 let mut rknn_tensor_attr = _rknn_tensor_attr::default();
                 rknn_tensor_attr.index = i;
                 let result = unsafe {
