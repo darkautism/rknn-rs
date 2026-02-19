@@ -1,6 +1,6 @@
 [package]
 name = "rknn-rs"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT"
 description = "rknn rust binding"
@@ -8,7 +8,7 @@ repository = "https://github.com/darkautism/rknn-rs"
 
 [dependencies]
 bytemuck = "1.23.2"
-rknn-sys-rs = "0.1.0"
+rknn-sys-rs = { version = "0.1.1", path = "../rknn-sys-rs" }
 
 [features]
 rknnmrt = ["rknn-sys-rs/rknnmrt"]

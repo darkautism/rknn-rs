@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.2.1]
+
+### Added
+
+- **RKNN Toolkit 2.3.2 support**: Synced `rknn_api.h` with RKNN Toolkit 2.3.2.
+- **User-friendly query wrappers**: Added structured APIs for `sdk_version`, `io_num`, `input_attrs`, `output_attrs`, and `model_info`.
+- **Memory RAII wrapper**: Added `RknnTensorMemory` with automatic `Drop` cleanup for `rknn_create_mem` / `rknn_create_mem2` allocations.
+- **Core control wrappers**: Added `set_core_mask` and `set_batch_core_num`.
+
+### Changed
+
+- **Version bump**: `rknn-rs` bumped to `0.2.1`, `rknn-sys-rs` bumped to `0.1.1`.
+- **Input UX**: `input_set` now accepts immutable Rust input references and `input_set_slice` was added for large-input zero-clone usage.
+- **Large-input safety**: `RknnInput<T>` no longer implements `Clone` to avoid accidental full-buffer duplication on large tensors.
+- **Tensor memory UX**: Removed public raw pointer accessors from `RknnTensorMemory`; use Rust slice APIs (`as_bytes`, `as_slice`, `as_mut_slice`, `write_slice`) instead.
+- **Tensor attr UX**: `input_attrs` / `output_attrs` now return Rust-friendly `RknnTensorAttr` (with `String` name and `Vec<u32>` dims) instead of raw C layout.
+
 ## [v0.2.0]
 
 ### Breaking Changes

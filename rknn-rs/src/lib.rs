@@ -10,18 +10,30 @@ pub mod error;
 pub mod prelude {
     use super::rknn_sys;
     use std::{
-        ffi::CString, mem, os::raw::c_void, ptr::null_mut, slice, str,
+        ffi::CString,
+        marker::PhantomData,
+        mem,
+        os::raw::{c_char, c_void},
+        ptr::{self, null_mut, NonNull},
+        slice, str,
     };
 
-    use bytemuck::Pod;
     pub use crate::error::Error;
     use crate::rkerr;
+    use bytemuck::Pod;
+
+    fn c_char_array_to_string(chars: &[c_char]) -> String {
+        let end = chars.iter().position(|&c| c == 0).unwrap_or(chars.len());
+        let bytes = unsafe { slice::from_raw_parts(chars.as_ptr() as *const u8, end) };
+        String::from_utf8_lossy(bytes).into_owned()
+    }
 
     /// RKNN tensor attributes.
     ///
     /// This struct describes the attributes of a tensor in an RKNN model, including dimensions, name, type, etc.
+    #[repr(C)]
     #[derive(Debug, Copy, Clone)]
-    pub struct _rknn_tensor_attr {
+    struct _rknn_tensor_attr {
         /// Tensor index.
         pub index: u32,
         /// Number of dimensions.
@@ -55,6 +67,7 @@ pub mod prelude {
         /// Height stride.
         pub h_stride: u32,
     }
+
     impl Default for _rknn_tensor_attr {
         fn default() -> Self {
             _rknn_tensor_attr {
@@ -78,11 +91,18 @@ pub mod prelude {
         }
     }
 
+    impl _rknn_tensor_attr {
+        fn name_string(&self) -> String {
+            c_char_array_to_string(&self.name)
+        }
+    }
+
     /// RKNN input structure.
     ///
     /// This struct defines the input parameters for an RKNN model.
+    #[repr(C)]
     #[derive(Debug, Copy, Clone)]
-    pub struct _rknn_input {
+    struct _rknn_input {
         /// Input index.
         pub index: u32,
         /// Pointer to the input data buffer.
@@ -113,7 +133,7 @@ pub mod prelude {
     /// Generic RKNN input structure.
     ///
     /// This struct provides a generic way to define inputs for an RKNN model.
-    #[derive(Debug, Clone)]
+    #[derive(Debug)]
     pub struct RknnInput<T> {
         /// Input index.
         pub index: usize,
@@ -170,6 +190,26 @@ pub mod prelude {
         BFloat16,
         /// Maximum type value (for boundary checking).
         TypeMax,
+    }
+
+    impl RknnTensorType {
+        pub fn from_int(input: u32) -> Self {
+            match input {
+                0 => RknnTensorType::Float32,
+                1 => RknnTensorType::Float16,
+                2 => RknnTensorType::Int8,
+                3 => RknnTensorType::Uint8,
+                4 => RknnTensorType::Int16,
+                5 => RknnTensorType::Uint16,
+                6 => RknnTensorType::Int32,
+                7 => RknnTensorType::Uint32,
+                8 => RknnTensorType::Int64,
+                9 => RknnTensorType::Boolean,
+                10 => RknnTensorType::Int4,
+                11 => RknnTensorType::BFloat16,
+                _ => RknnTensorType::TypeMax,
+            }
+        }
     }
 
     /// RKNN tensor format.
@@ -229,6 +269,226 @@ pub mod prelude {
         }
     }
 
+    #[derive(Debug, Copy, Clone)]
+    pub enum RknnTensorQntType {
+        None = 0,
+        Dfp = 1,
+        AffineAsymmetric = 2,
+        QntMax,
+    }
+
+    impl RknnTensorQntType {
+        pub fn from_int(input: u32) -> Self {
+            match input {
+                0 => RknnTensorQntType::None,
+                1 => RknnTensorQntType::Dfp,
+                2 => RknnTensorQntType::AffineAsymmetric,
+                _ => RknnTensorQntType::QntMax,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct RknnTensorAttr {
+        pub index: u32,
+        pub n_dims: u32,
+        pub dims: Vec<u32>,
+        pub name: String,
+        pub n_elems: u32,
+        pub size: u32,
+        pub fmt: RknnTensorFormat,
+        pub type_: RknnTensorType,
+        pub qnt_type: RknnTensorQntType,
+        pub fl: i8,
+        pub zp: i32,
+        pub scale: f32,
+        pub w_stride: u32,
+        pub size_with_stride: u32,
+        pub pass_through: bool,
+        pub h_stride: u32,
+    }
+
+    impl From<_rknn_tensor_attr> for RknnTensorAttr {
+        fn from(raw: _rknn_tensor_attr) -> Self {
+            let dims_len = raw.n_dims.min(raw.dims.len() as u32) as usize;
+            RknnTensorAttr {
+                index: raw.index,
+                n_dims: raw.n_dims,
+                dims: raw.dims[..dims_len].to_vec(),
+                name: raw.name_string(),
+                n_elems: raw.n_elems,
+                size: raw.size,
+                fmt: RknnTensorFormat::from_int(raw.fmt),
+                type_: RknnTensorType::from_int(raw.type_),
+                qnt_type: RknnTensorQntType::from_int(raw.qnt_type),
+                fl: raw.fl,
+                zp: raw.zp,
+                scale: raw.scale,
+                w_stride: raw.w_stride,
+                size_with_stride: raw.size_with_stride,
+                pass_through: raw.pass_through != 0,
+                h_stride: raw.h_stride,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct RknnSdkVersion {
+        pub api_version: String,
+        pub drv_version: String,
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    pub struct RknnInputOutputNum {
+        pub n_input: u32,
+        pub n_output: u32,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct RknnModelInfo {
+        pub io_num: RknnInputOutputNum,
+        pub input_attrs: Vec<RknnTensorAttr>,
+        pub output_attrs: Vec<RknnTensorAttr>,
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    #[repr(u32)]
+    pub enum RknnCoreMask {
+        Auto = 0,
+        Core0 = 1,
+        Core1 = 2,
+        Core2 = 4,
+        Core0_1 = 3,
+        Core0_1_2 = 7,
+        All = 0xffff,
+        Undefined = 0x1_0000,
+    }
+
+    pub struct RknnMemAllocFlags;
+    impl RknnMemAllocFlags {
+        pub const DEFAULT: u64 = 0;
+        pub const CACHEABLE: u64 = 1 << 0;
+        pub const NON_CACHEABLE: u64 = 1 << 1;
+        pub const TRY_ALLOC_SRAM: u64 = 1 << 2;
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    #[repr(u32)]
+    pub enum RknnMemSyncMode {
+        ToDevice = 0x1,
+        FromDevice = 0x2,
+        Bidirectional = 0x3,
+    }
+
+    #[derive(Debug)]
+    pub struct RknnTensorMemory<'a> {
+        context: rknn_sys::rknn_context,
+        raw: *mut rknn_sys::rknn_tensor_mem,
+        _owner: PhantomData<&'a Rknn>,
+    }
+
+    impl<'a> Drop for RknnTensorMemory<'a> {
+        fn drop(&mut self) {
+            if !self.raw.is_null() {
+                unsafe {
+                    rknn_sys::rknn_destroy_mem(self.context, self.raw);
+                }
+                self.raw = ptr::null_mut();
+            }
+        }
+    }
+
+    impl<'a> RknnTensorMemory<'a> {
+        fn raw_ref(&self) -> Result<&rknn_sys::rknn_tensor_mem, Error> {
+            unsafe { self.raw.as_ref() }
+                .ok_or_else(|| Error("RknnTensorMemory has been released.".to_string()))
+        }
+
+        fn raw_mut_ref(&mut self) -> Result<&mut rknn_sys::rknn_tensor_mem, Error> {
+            unsafe { self.raw.as_mut() }
+                .ok_or_else(|| Error("RknnTensorMemory has been released.".to_string()))
+        }
+
+        fn raw_bytes_ptr(virt_addr: *mut c_void, size: usize) -> Result<*mut u8, Error> {
+            if size == 0 {
+                return Ok(NonNull::<u8>::dangling().as_ptr());
+            }
+            if virt_addr.is_null() {
+                return Err(Error("Tensor memory points to a null buffer.".to_string()));
+            }
+            Ok(virt_addr as *mut u8)
+        }
+
+        pub fn size(&self) -> Result<u32, Error> {
+            Ok(self.raw_ref()?.size)
+        }
+
+        pub fn fd(&self) -> Result<i32, Error> {
+            Ok(self.raw_ref()?.fd)
+        }
+
+        pub fn as_bytes(&self) -> Result<&[u8], Error> {
+            let raw = self.raw_ref()?;
+            let size = raw.size as usize;
+            let ptr = Self::raw_bytes_ptr(raw.virt_addr, size)?;
+            Ok(unsafe { slice::from_raw_parts(ptr as *const u8, size) })
+        }
+
+        pub fn as_bytes_mut(&mut self) -> Result<&mut [u8], Error> {
+            let raw = self.raw_mut_ref()?;
+            let size = raw.size as usize;
+            let ptr = Self::raw_bytes_ptr(raw.virt_addr, size)?;
+            Ok(unsafe { slice::from_raw_parts_mut(ptr, size) })
+        }
+
+        pub fn as_slice<T: Pod>(&self) -> Result<&[T], Error> {
+            let bytes = self.as_bytes()?;
+            bytemuck::try_cast_slice(bytes).map_err(|_| {
+                Error(format!(
+                    "Tensor memory cannot be viewed as {}",
+                    std::any::type_name::<T>()
+                ))
+            })
+        }
+
+        pub fn as_mut_slice<T: Pod>(&mut self) -> Result<&mut [T], Error> {
+            let bytes = self.as_bytes_mut()?;
+            bytemuck::try_cast_slice_mut(bytes).map_err(|_| {
+                Error(format!(
+                    "Tensor memory cannot be viewed as mutable {}",
+                    std::any::type_name::<T>()
+                ))
+            })
+        }
+
+        pub fn write_slice<T: Pod>(&mut self, data: &[T]) -> Result<(), Error> {
+            let dst = self.as_mut_slice::<T>()?;
+            if data.len() > dst.len() {
+                return Err(Error(format!(
+                    "Input data is too large: {} elements > {} elements",
+                    data.len(),
+                    dst.len()
+                )));
+            }
+            dst[..data.len()].copy_from_slice(data);
+            Ok(())
+        }
+
+        pub fn sync(&self, mode: RknnMemSyncMode) -> Result<(), Error> {
+            let result = unsafe {
+                rknn_sys::rknn_mem_sync(
+                    self.context,
+                    self.raw,
+                    mode as rknn_sys::rknn_mem_sync_mode,
+                )
+            };
+            if result != 0 {
+                return rkerr!("rknn_mem_sync failed.", result);
+            }
+            Ok(())
+        }
+    }
+
     /// RKNN output structure.
     ///
     /// This struct holds the output data of an RKNN model and includes internal structures for resource release.
@@ -266,14 +526,14 @@ pub mod prelude {
     /// RKNN model.
     ///
     /// This struct encapsulates the context of an RKNN model, providing methods to load the model, set inputs, run inference, and retrieve outputs.
-    /// 
+    ///
     /// # Examples
     ///
     /// Here’s a simple example of how to use the `Rknn` struct:
     ///
-    /// ```rust
+    /// ```no_run
     /// use std::path::Path;
-    /// use crate::prelude::*;
+    /// use rknn_rs::prelude::*;
     ///
     /// fn main() -> Result<(), Error> {
     ///     // Initialize the model
@@ -281,14 +541,14 @@ pub mod prelude {
     ///     let rknn = Rknn::rknn_init(model_path)?;
     ///
     ///     // Set input
-    ///     let mut input = RknnInput::<f32> {
+    ///     let input = RknnInput::<f32> {
     ///         index: 0,
     ///         buf: vec![0.0; 100],
     ///         pass_through: false,
     ///         type_: RknnTensorType::Float32,
     ///         fmt: RknnTensorFormat::NCHW,
     ///     };
-    ///     rknn.input_set(&mut input)?;
+    ///     rknn.input_set(&input)?;
     ///
     ///     // Run the model
     ///     rknn.run()?;
@@ -344,24 +604,45 @@ pub mod prelude {
             Ok(ret)
         }
 
+        pub fn new<P: AsRef<std::path::Path>>(model_path: P) -> Result<Self, Error> {
+            Self::rknn_init(model_path)
+        }
+
         /// Set the model's input.
         ///
         /// # Parameters
         ///
-        /// - `input`: A mutable reference to the generic input structure `RknnInput<T>`.
+        /// - `input`: A reference to the generic input structure `RknnInput<T>`.
         ///
         /// # Returns
         ///
         /// If successful, returns `Ok(()`; otherwise, returns an `Error`.
-        pub fn input_set<T: Pod + 'static>(&self, input: &mut RknnInput<T>) -> Result<(), Error> {
-            let total_bytes = (input.buf.len() * mem::size_of::<T>()) as u32;
+        pub fn input_set<T: Pod + 'static>(&self, input: &RknnInput<T>) -> Result<(), Error> {
+            self.input_set_slice(
+                input.index,
+                &input.buf,
+                input.pass_through,
+                input.type_,
+                input.fmt,
+            )
+        }
+
+        pub fn input_set_slice<T: Pod + 'static>(
+            &self,
+            index: usize,
+            buf: &[T],
+            pass_through: bool,
+            type_: RknnTensorType,
+            fmt: RknnTensorFormat,
+        ) -> Result<(), Error> {
+            let total_bytes = (buf.len() * mem::size_of::<T>()) as u32;
             let mut c_input = rknn_sys::rknn_input {
-                index: input.index as u32,
-                buf: input.buf.as_mut_ptr() as *mut c_void,
+                index: index as u32,
+                buf: buf.as_ptr() as *mut c_void,
                 size: total_bytes,
-                pass_through: if input.pass_through { 1 } else { 0 },
-                type_: input.type_ as u32,
-                fmt: input.fmt as u32,
+                pass_through: if pass_through { 1 } else { 0 },
+                type_: type_ as u32,
+                fmt: fmt as u32,
             };
 
             let result = unsafe { rknn_sys::rknn_inputs_set(self.context, 1, &mut c_input) };
@@ -384,6 +665,162 @@ pub mod prelude {
             Ok(())
         }
 
+        pub fn set_batch_core_num(&self, core_num: i32) -> Result<(), Error> {
+            let result = unsafe { rknn_sys::rknn_set_batch_core_num(self.context, core_num) };
+            if result != 0 {
+                return rkerr!("rknn_set_batch_core_num failed.", result);
+            }
+            Ok(())
+        }
+
+        pub fn set_core_mask(&self, core_mask: RknnCoreMask) -> Result<(), Error> {
+            let result = unsafe {
+                rknn_sys::rknn_set_core_mask(self.context, core_mask as rknn_sys::rknn_core_mask)
+            };
+            if result != 0 {
+                return rkerr!("rknn_set_core_mask failed.", result);
+            }
+            Ok(())
+        }
+
+        pub fn sdk_version(&self) -> Result<RknnSdkVersion, Error> {
+            let mut version = rknn_sys::_rknn_sdk_version {
+                api_version: [0; 256],
+                drv_version: [0; 256],
+            };
+            let result = unsafe {
+                rknn_sys::rknn_query(
+                    self.context,
+                    rknn_sys::_rknn_query_cmd_RKNN_QUERY_SDK_VERSION,
+                    &mut version as *mut rknn_sys::_rknn_sdk_version as *mut c_void,
+                    mem::size_of::<rknn_sys::_rknn_sdk_version>() as u32,
+                )
+            };
+            if result != 0 {
+                return rkerr!("rknn_query sdk_version failed.", result);
+            }
+            Ok(RknnSdkVersion {
+                api_version: c_char_array_to_string(&version.api_version),
+                drv_version: c_char_array_to_string(&version.drv_version),
+            })
+        }
+
+        pub fn io_num(&self) -> Result<RknnInputOutputNum, Error> {
+            let mut io_num = rknn_sys::_rknn_input_output_num {
+                n_input: 0,
+                n_output: 0,
+            };
+            let result = unsafe {
+                rknn_sys::rknn_query(
+                    self.context,
+                    rknn_sys::_rknn_query_cmd_RKNN_QUERY_IN_OUT_NUM,
+                    &mut io_num as *mut rknn_sys::_rknn_input_output_num as *mut c_void,
+                    mem::size_of::<rknn_sys::_rknn_input_output_num>() as u32,
+                )
+            };
+            if result != 0 {
+                return rkerr!("rknn_query in_out_num failed.", result);
+            }
+            Ok(RknnInputOutputNum {
+                n_input: io_num.n_input,
+                n_output: io_num.n_output,
+            })
+        }
+
+        fn query_tensor_attr(
+            &self,
+            index: u32,
+            query_cmd: rknn_sys::rknn_query_cmd,
+        ) -> Result<RknnTensorAttr, Error> {
+            let mut attr = _rknn_tensor_attr::default();
+            attr.index = index;
+            let result = unsafe {
+                rknn_sys::rknn_query(
+                    self.context,
+                    query_cmd,
+                    &mut attr as *mut _rknn_tensor_attr as *mut c_void,
+                    mem::size_of::<_rknn_tensor_attr>() as u32,
+                )
+            };
+            if result != 0 {
+                return rkerr!("rknn_query tensor_attr failed.", result);
+            }
+            Ok(attr.into())
+        }
+
+        fn query_tensor_attrs(
+            &self,
+            query_cmd: rknn_sys::rknn_query_cmd,
+            count: u32,
+        ) -> Result<Vec<RknnTensorAttr>, Error> {
+            let mut attrs = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                attrs.push(self.query_tensor_attr(i, query_cmd)?);
+            }
+            Ok(attrs)
+        }
+
+        pub fn input_attrs(&self) -> Result<Vec<RknnTensorAttr>, Error> {
+            let io_num = self.io_num()?;
+            self.query_tensor_attrs(
+                rknn_sys::_rknn_query_cmd_RKNN_QUERY_INPUT_ATTR,
+                io_num.n_input,
+            )
+        }
+
+        pub fn output_attrs(&self) -> Result<Vec<RknnTensorAttr>, Error> {
+            let io_num = self.io_num()?;
+            self.query_tensor_attrs(
+                rknn_sys::_rknn_query_cmd_RKNN_QUERY_OUTPUT_ATTR,
+                io_num.n_output,
+            )
+        }
+
+        pub fn model_info(&self) -> Result<RknnModelInfo, Error> {
+            let io_num = self.io_num()?;
+            let input_attrs = self.query_tensor_attrs(
+                rknn_sys::_rknn_query_cmd_RKNN_QUERY_INPUT_ATTR,
+                io_num.n_input,
+            )?;
+            let output_attrs = self.query_tensor_attrs(
+                rknn_sys::_rknn_query_cmd_RKNN_QUERY_OUTPUT_ATTR,
+                io_num.n_output,
+            )?;
+            Ok(RknnModelInfo {
+                io_num,
+                input_attrs,
+                output_attrs,
+            })
+        }
+
+        pub fn create_mem<'a>(&'a self, size: u32) -> Result<RknnTensorMemory<'a>, Error> {
+            let raw = unsafe { rknn_sys::rknn_create_mem(self.context, size) };
+            if raw.is_null() {
+                return Err(Error("rknn_create_mem failed.".to_string()));
+            }
+            Ok(RknnTensorMemory {
+                context: self.context,
+                raw,
+                _owner: PhantomData,
+            })
+        }
+
+        pub fn create_mem2<'a>(
+            &'a self,
+            size: u64,
+            alloc_flags: u64,
+        ) -> Result<RknnTensorMemory<'a>, Error> {
+            let raw = unsafe { rknn_sys::rknn_create_mem2(self.context, size, alloc_flags) };
+            if raw.is_null() {
+                return Err(Error("rknn_create_mem2 failed.".to_string()));
+            }
+            Ok(RknnTensorMemory {
+                context: self.context,
+                raw,
+                _owner: PhantomData,
+            })
+        }
+
         /// Retrieve input/output information of the model.
         ///
         /// This method queries the model's input and output tensor attributes and prints them.
@@ -392,58 +829,14 @@ pub mod prelude {
         ///
         /// If successful, returns `Ok(()`; otherwise, returns an `Error`.
         pub fn info(&self) -> Result<(), Error> {
-            let mut io_num = rknn_sys::_rknn_input_output_num {
-                n_input: 0,
-                n_output: 0,
-            };
-
-            let result = unsafe {
-                rknn_sys::rknn_query(
-                    self.context,
-                    rknn_sys::_rknn_query_cmd_RKNN_QUERY_IN_OUT_NUM,
-                    &mut io_num as *mut rknn_sys::_rknn_input_output_num as *mut std::ffi::c_void,
-                    mem::size_of::<rknn_sys::_rknn_input_output_num>() as u32,
-                )
-            };
-
-            if result != 0 {
-                return rkerr!("rknn_query  faild.", result);
+            let info = self.model_info()?;
+            println!("{:?}", info.io_num);
+            for attr in &info.input_attrs {
+                println!("input: {:?}", attr);
             }
-
-            for i in 0..io_num.n_input {
-                let mut rknn_tensor_attr = _rknn_tensor_attr::default();
-                rknn_tensor_attr.index = i;
-                let result = unsafe {
-                    rknn_sys::rknn_query(
-                        self.context,
-                        rknn_sys::_rknn_query_cmd_RKNN_QUERY_INPUT_ATTR,
-                        &mut rknn_tensor_attr as *mut _rknn_tensor_attr as *mut std::ffi::c_void,
-                        mem::size_of::<rknn_sys::_rknn_tensor_attr>() as u32,
-                    )
-                };
-                println!("{:?}", rknn_tensor_attr);
-                if result != 0 {
-                    return rkerr!("rknn_query faild.", result);
-                }
+            for attr in &info.output_attrs {
+                println!("output: {:?}", attr);
             }
-
-            for i in 0..io_num.n_output {
-                let mut rknn_tensor_attr = _rknn_tensor_attr::default();
-                rknn_tensor_attr.index = i;
-                let result = unsafe {
-                    rknn_sys::rknn_query(
-                        self.context,
-                        rknn_sys::_rknn_query_cmd_RKNN_QUERY_OUTPUT_ATTR,
-                        &mut rknn_tensor_attr as *mut _rknn_tensor_attr as *mut std::ffi::c_void,
-                        mem::size_of::<rknn_sys::_rknn_tensor_attr>() as u32,
-                    )
-                };
-                println!("{:?}", rknn_tensor_attr);
-                if result != 0 {
-                    return rkerr!("rknn_query faild.", result);
-                }
-            }
-
             Ok(())
         }
 
@@ -455,7 +848,9 @@ pub mod prelude {
         /// # Returns
         ///
         /// If successful, returns a `RknnOutput<'a, T>`; otherwise, returns an `Error`.
-        pub fn outputs_get<'a, T: Pod + Copy + 'static>(&'a self) -> Result<RknnOutput<'a, T>, Error> {
+        pub fn outputs_get<'a, T: Pod + Copy + 'static>(
+            &'a self,
+        ) -> Result<RknnOutput<'a, T>, Error> {
             let mut out = rknn_sys::rknn_output {
                 want_float: 1,
                 is_prealloc: 0,
@@ -463,16 +858,17 @@ pub mod prelude {
                 buf: std::ptr::null_mut(),
                 size: 0,
             };
-            
-            let result =
-                unsafe { rknn_sys::rknn_outputs_get(self.context, 1, &mut out, std::ptr::null_mut()) };
+
+            let result = unsafe {
+                rknn_sys::rknn_outputs_get(self.context, 1, &mut out, std::ptr::null_mut())
+            };
             if result != 0 {
                 return rkerr!("rknn_outputs_get faild.", result);
             }
             let element_size = mem::size_of::<T>();
             let num_elements = out.size as usize / element_size;
             let t_slice = unsafe { slice::from_raw_parts(out.buf as *const T, num_elements) };
-            
+
             Ok(RknnOutput {
                 context: self.context,
                 memory: t_slice,

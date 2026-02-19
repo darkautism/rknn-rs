@@ -5,9 +5,17 @@
   * **Rusty API**: Encapsulates the C-based `rknn_api` into safe Rust structs and methods.
   * **Resource Management**: Implements resource release mechanisms to prevent memory leaks.
 
+## Version compatibility
+
+| Component | Version |
+| --- | --- |
+| rknn-rs | 0.2.1 |
+| rknn-sys-rs | 0.1.1 |
+| RKNN Toolkit | 2.3.2 |
+
 ## Changelog
 
-Migrating to version 0.2.0 involves API changes. Please refer to the Change log for details.
+Migrating to version 0.2.x involves API changes. Please refer to the Change log for details.
 
 [Changelog](CHANGELOG.md)
 
@@ -21,16 +29,16 @@ Just add the `rknnmrt` feature gate into your `Cargo.toml`.
 use rknn_rs::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut rknn = Rknn::rknn_init("/home/kautism/SenseVoiceSmall-RKNN2/sense-voice-encoder.rknn")?;
-    rknn.input_set(&mut RknnInput {
-        index: 0,                     // Set according to your input index
-        buf: flattened_input,         /* Your data */
-        pass_through: false,          // Usually false, unless the model requires special handling
-        type_: RknnTensorType::Float32,
-        fmt: RknnTensorFormat::NCHW,
-    })?;
+    let rknn = Rknn::rknn_init("/home/kautism/SenseVoiceSmall-RKNN2/sense-voice-encoder.rknn")?;
+    rknn.input_set_slice(
+        0,                    // Set according to your input index
+        &flattened_input,     // Borrowed input slice (no extra clone)
+        false,                // Usually false, unless the model requires special handling
+        RknnTensorType::Float32,
+        RknnTensorFormat::NCHW,
+    )?;
 
-    let mut asr_output = rknn.outputs_get::<f32>()?;
+    let asr_output = rknn.outputs_get::<f32>()?;
     // Do something with the data
     Ok(())
 }

@@ -1,3 +1,6 @@
 [workspace]
 members = ["rknn-sys-rs", "rknn-rs"]
 resolver = "2"
+
+[patch.crates-io]
+rknn-sys-rs = { path = "rknn-sys-rs" }

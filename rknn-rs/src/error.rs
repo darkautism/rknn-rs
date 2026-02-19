@@ -25,6 +25,9 @@ impl std::error::Error for Error {
 #[macro_export]
 macro_rules! rkerr {
     ($msg:expr, $code:expr) => {
-        Err($crate::error::Error(format!("{} exit code:{}", $msg, $code)))
+        Err($crate::error::Error(format!(
+            "{} exit code:{}",
+            $msg, $code
+        )))
     };
 }
