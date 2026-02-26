@@ -15,7 +15,7 @@ pub mod prelude {
         mem,
         os::raw::{c_char, c_void},
         ptr::{self, null_mut, NonNull},
-        slice, str,
+        slice,
     };
 
     pub use crate::error::Error;
@@ -26,108 +26,6 @@ pub mod prelude {
         let end = chars.iter().position(|&c| c == 0).unwrap_or(chars.len());
         let bytes = unsafe { slice::from_raw_parts(chars.as_ptr() as *const u8, end) };
         String::from_utf8_lossy(bytes).into_owned()
-    }
-
-    /// RKNN tensor attributes.
-    ///
-    /// This struct describes the attributes of a tensor in an RKNN model, including dimensions, name, type, etc.
-    #[repr(C)]
-    #[derive(Debug, Copy, Clone)]
-    struct _rknn_tensor_attr {
-        /// Tensor index.
-        pub index: u32,
-        /// Number of dimensions.
-        pub n_dims: u32,
-        /// Tensor dimensions.
-        pub dims: [u32; 16usize],
-        /// Tensor name.
-        pub name: [::std::os::raw::c_char; 256usize],
-        /// Number of elements in the tensor.
-        pub n_elems: u32,
-        /// Size of the tensor in bytes.
-        pub size: u32,
-        /// Tensor format.
-        pub fmt: rknn_sys::rknn_tensor_format,
-        /// Tensor type.
-        pub type_: rknn_sys::rknn_tensor_type,
-        /// Tensor quantization type.
-        pub qnt_type: rknn_sys::rknn_tensor_qnt_type,
-        /// Quantization parameter fl.
-        pub fl: i8,
-        /// Quantization parameter zp.
-        pub zp: i32,
-        /// Quantization parameter scale.
-        pub scale: f32,
-        /// Width stride.
-        pub w_stride: u32,
-        /// Tensor size with stride.
-        pub size_with_stride: u32,
-        /// Whether to pass through.
-        pub pass_through: u8,
-        /// Height stride.
-        pub h_stride: u32,
-    }
-
-    impl Default for _rknn_tensor_attr {
-        fn default() -> Self {
-            _rknn_tensor_attr {
-                index: 0,
-                n_dims: 0,
-                dims: [0; 16],
-                name: [0; 256],
-                n_elems: 0,
-                size: 0,
-                fmt: rknn_sys::rknn_tensor_format::default(),
-                type_: rknn_sys::rknn_tensor_type::default(),
-                qnt_type: rknn_sys::rknn_tensor_qnt_type::default(),
-                fl: 0,
-                zp: 0,
-                scale: 0.0,
-                w_stride: 0,
-                size_with_stride: 0,
-                pass_through: 0,
-                h_stride: 0,
-            }
-        }
-    }
-
-    impl _rknn_tensor_attr {
-        fn name_string(&self) -> String {
-            c_char_array_to_string(&self.name)
-        }
-    }
-
-    /// RKNN input structure.
-    ///
-    /// This struct defines the input parameters for an RKNN model.
-    #[repr(C)]
-    #[derive(Debug, Copy, Clone)]
-    struct _rknn_input {
-        /// Input index.
-        pub index: u32,
-        /// Pointer to the input data buffer.
-        pub buf: *mut ::std::os::raw::c_void,
-        /// Size of the input data in bytes.
-        pub size: u32,
-        /// Whether to pass through.
-        pub pass_through: u8,
-        /// Input data type.
-        pub type_: rknn_sys::rknn_tensor_type,
-        /// Input data format.
-        pub fmt: rknn_sys::rknn_tensor_format,
-    }
-
-    impl Default for _rknn_input {
-        fn default() -> Self {
-            _rknn_input {
-                index: 0,
-                buf: null_mut(),
-                size: 0,
-                pass_through: 1,
-                fmt: rknn_sys::rknn_tensor_format::default(),
-                type_: rknn_sys::rknn_tensor_type::default(),
-            }
-        }
     }
 
     /// Generic RKNN input structure.
@@ -308,14 +206,14 @@ pub mod prelude {
         pub h_stride: u32,
     }
 
-    impl From<_rknn_tensor_attr> for RknnTensorAttr {
-        fn from(raw: _rknn_tensor_attr) -> Self {
+    impl From<rknn_sys::_rknn_tensor_attr> for RknnTensorAttr {
+        fn from(raw: rknn_sys::_rknn_tensor_attr) -> Self {
             let dims_len = raw.n_dims.min(raw.dims.len() as u32) as usize;
             RknnTensorAttr {
                 index: raw.index,
                 n_dims: raw.n_dims,
                 dims: raw.dims[..dims_len].to_vec(),
-                name: raw.name_string(),
+                name: c_char_array_to_string(&raw.name),
                 n_elems: raw.n_elems,
                 size: raw.size,
                 fmt: RknnTensorFormat::from_int(raw.fmt),
@@ -592,6 +490,7 @@ pub mod prelude {
         /// # Returns
         ///
         /// If successful, returns an `Rknn` instance; otherwise, returns an `Error`.
+        #[deprecated(since = "0.2.4", note = "use Rknn::new() instead")]
         pub fn rknn_init<P: AsRef<std::path::Path>>(model_path: P) -> Result<Self, Error> {
             let mut ret = Rknn { context: 0 };
             let path_str = model_path.as_ref().to_string_lossy();
@@ -607,12 +506,13 @@ pub mod prelude {
                     null_mut(),
                 );
                 if result != 0 {
-                    return rkerr!("rknn_init faild.", result);
+                    return rkerr!("rknn_init failed.", result);
                 }
             }
             Ok(ret)
         }
 
+        #[allow(deprecated)]
         pub fn new<P: AsRef<std::path::Path>>(model_path: P) -> Result<Self, Error> {
             Self::rknn_init(model_path)
         }
@@ -661,6 +561,42 @@ pub mod prelude {
             Ok(())
         }
 
+        /// Set multiple inputs in a single `rknn_inputs_set` call.
+        ///
+        /// The RKNN 2.3.x runtime may behave incorrectly when inputs are set one-by-one
+        /// (n=1 each call) for models with multiple inputs. Use this method to set all
+        /// inputs atomically in one call when that is the case.
+        ///
+        /// Each element of `inputs` is `(index, raw_bytes, pass_through, type_, fmt)`.
+        /// Use `bytemuck::cast_slice` or `bytemuck::bytes_of` to obtain `&[u8]` from typed slices.
+        pub fn inputs_set_batch(
+            &self,
+            inputs: &[(usize, &[u8], bool, RknnTensorType, RknnTensorFormat)],
+        ) -> Result<(), Error> {
+            let mut c_inputs: Vec<rknn_sys::rknn_input> = inputs
+                .iter()
+                .map(|(idx, data, pass_through, type_, fmt)| rknn_sys::rknn_input {
+                    index: *idx as u32,
+                    buf: data.as_ptr() as *mut c_void,
+                    size: data.len() as u32,
+                    pass_through: if *pass_through { 1 } else { 0 },
+                    type_: *type_ as u32,
+                    fmt: *fmt as u32,
+                })
+                .collect();
+            let result = unsafe {
+                rknn_sys::rknn_inputs_set(
+                    self.context,
+                    c_inputs.len() as u32,
+                    c_inputs.as_mut_ptr(),
+                )
+            };
+            if result != 0 {
+                return rkerr!("rknn_inputs_set failed.", result);
+            }
+            Ok(())
+        }
+
         /// Run the RKNN model.
         ///
         /// # Returns
@@ -669,7 +605,7 @@ pub mod prelude {
         pub fn run(&self) -> Result<(), Error> {
             let result = unsafe { rknn_sys::rknn_run(self.context, null_mut()) };
             if result != 0 {
-                return rkerr!("rknn_run faild.", result);
+                return rkerr!("rknn_run failed.", result);
             }
             Ok(())
         }
@@ -741,14 +677,14 @@ pub mod prelude {
             index: u32,
             query_cmd: rknn_sys::rknn_query_cmd,
         ) -> Result<RknnTensorAttr, Error> {
-            let mut attr = _rknn_tensor_attr::default();
+            let mut attr: rknn_sys::_rknn_tensor_attr = unsafe { mem::zeroed() };
             attr.index = index;
             let result = unsafe {
                 rknn_sys::rknn_query(
                     self.context,
                     query_cmd,
-                    &mut attr as *mut _rknn_tensor_attr as *mut c_void,
-                    mem::size_of::<_rknn_tensor_attr>() as u32,
+                    &mut attr as *mut rknn_sys::_rknn_tensor_attr as *mut c_void,
+                    mem::size_of::<rknn_sys::_rknn_tensor_attr>() as u32,
                 )
             };
             if result != 0 {
@@ -900,7 +836,7 @@ pub mod prelude {
                 )
             };
             if result != 0 {
-                return rkerr!("rknn_outputs_get faild.", result);
+                return rkerr!("rknn_outputs_get failed.", result);
             }
 
             let desired = &all_raws[index as usize];

@@ -9,7 +9,7 @@
 
 | Component | Version |
 | --- | --- |
-| rknn-rs | 0.2.3 |
+| rknn-rs | 0.2.4 |
 | rknn-sys-rs | 0.1.2 |
 | RKNN Toolkit | 2.3.2 |
 

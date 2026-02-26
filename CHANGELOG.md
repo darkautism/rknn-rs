@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.2.4]
+
+### Changed
+
+- **Code cleanup**: Removed two dead-code private structs (`_rknn_tensor_attr`, `_rknn_input`)
+  that duplicated bindgen-generated equivalents in `rknn-sys-rs`. Internal query code now uses
+  `rknn_sys::_rknn_tensor_attr` directly.
+- **`rknn_init` deprecated**: Use `Rknn::new()` instead. `rknn_init` is kept for backwards
+  compatibility but will be removed in a future release.
+- **Typo fixes**: "faild" → "failed" in three internal error messages.
+
 ## [v0.2.3] / rknn-sys-rs [v0.1.2]
 
 ### Fixed
