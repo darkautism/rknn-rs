@@ -496,13 +496,22 @@ pub mod prelude {
     pub struct RknnOutput<'a, T> {
         context: rknn_sys::rknn_context,
         memory: &'a [T],
-        raw: rknn_sys::rknn_output,
+        // Holds ALL output structs from the rknn_outputs_get call.
+        // The RKNN runtime accesses all model outputs regardless of n_outputs,
+        // so we must allocate the full array and release it together.
+        all_raws: Vec<rknn_sys::rknn_output>,
     }
 
     impl<'a, T> Drop for RknnOutput<'a, T> {
         fn drop(&mut self) {
-            unsafe {
-                rknn_sys::rknn_outputs_release(self.context, 1, &mut self.raw);
+            if !self.all_raws.is_empty() {
+                unsafe {
+                    rknn_sys::rknn_outputs_release(
+                        self.context,
+                        self.all_raws.len() as u32,
+                        self.all_raws.as_mut_ptr(),
+                    );
+                }
             }
         }
     }
@@ -845,35 +854,90 @@ pub mod prelude {
         /// This method returns raw output data (zero-copy) and delegates resource management to `RknnOutput<T>`.
         /// The returned `RknnOutput` automatically releases resources when dropped.
         ///
+        /// # Arguments
+        ///
+        /// * `index` - Output tensor index (default 0 for single-output models).
+        /// * `want_float` - If true, ask the runtime to convert the output to float32.
+        ///
         /// # Returns
         ///
         /// If successful, returns a `RknnOutput<'a, T>`; otherwise, returns an `Error`.
-        pub fn outputs_get<'a, T: Pod + Copy + 'static>(
+        pub fn outputs_get_by_index<'a, T: Pod + Copy + 'static>(
             &'a self,
+            index: u32,
+            want_float: bool,
         ) -> Result<RknnOutput<'a, T>, Error> {
-            let mut out = rknn_sys::rknn_output {
-                want_float: 1,
-                is_prealloc: 0,
-                index: 0,
-                buf: std::ptr::null_mut(),
-                size: 0,
-            };
+            // IMPORTANT: The RKNN 2.3.x runtime internally iterates ALL model outputs
+            // regardless of the n_outputs argument. We must allocate a full array
+            // (size = n_model_output) so that the runtime never reads past the end.
+            let n_total = self.io_num()?.n_output;
+            if index >= n_total {
+                return Err(Error(format!(
+                    "output index {} out of range (model has {} outputs)",
+                    index, n_total
+                )));
+            }
+
+            // Zero all structs (including padding) to ensure the runtime reads clean data.
+            let mut all_raws: Vec<rknn_sys::rknn_output> = (0..n_total)
+                .map(|i| {
+                    let mut o: rknn_sys::rknn_output = unsafe { mem::zeroed() };
+                    o.want_float = if want_float { 1 } else { 0 };
+                    o.is_prealloc = 0;
+                    o.index = i;
+                    o.buf = std::ptr::null_mut();
+                    o.size = 0;
+                    o
+                })
+                .collect();
 
             let result = unsafe {
-                rknn_sys::rknn_outputs_get(self.context, 1, &mut out, std::ptr::null_mut())
+                rknn_sys::rknn_outputs_get(
+                    self.context,
+                    n_total,
+                    all_raws.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                )
             };
             if result != 0 {
                 return rkerr!("rknn_outputs_get faild.", result);
             }
+
+            let desired = &all_raws[index as usize];
+            if desired.buf.is_null() {
+                // Release all before returning error
+                unsafe {
+                    rknn_sys::rknn_outputs_release(
+                        self.context,
+                        n_total,
+                        all_raws.as_mut_ptr(),
+                    );
+                }
+                return Err(Error(format!(
+                    "rknn_outputs_get returned null buffer for output index {}",
+                    index
+                )));
+            }
             let element_size = mem::size_of::<T>();
-            let num_elements = out.size as usize / element_size;
-            let t_slice = unsafe { slice::from_raw_parts(out.buf as *const T, num_elements) };
+            let num_elements = desired.size as usize / element_size;
+            let t_slice =
+                unsafe { slice::from_raw_parts(desired.buf as *const T, num_elements) };
 
             Ok(RknnOutput {
                 context: self.context,
                 memory: t_slice,
-                raw: out,
+                all_raws,
             })
+        }
+
+        /// Get the model's first output as float32.
+        ///
+        /// Convenience wrapper around [`outputs_get_by_index`] for single-output models.
+        /// Asks the runtime to convert the output to float32 (`want_float = true`).
+        pub fn outputs_get<'a, T: Pod + Copy + 'static>(
+            &'a self,
+        ) -> Result<RknnOutput<'a, T>, Error> {
+            self.outputs_get_by_index(0, true)
         }
     }
 }

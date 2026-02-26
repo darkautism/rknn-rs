@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.2.3] / rknn-sys-rs [v0.1.2]
+
+### Fixed
+
+- **RKNN 2.3.x runtime OOB bug workaround**: `rknn_outputs_get` in the RKNN runtime internally
+  iterates **all** model outputs regardless of the `n_outputs` argument. Passing fewer structs
+  than the model's actual output count caused the runtime to read past the allocated array,
+  producing garbage `index` values and returning `-5 RKNN_ERR_OUTPUT_INVALID`.
+  `outputs_get_by_index` and `outputs_get` now query `io_num()` first and always allocate a
+  full-sized `rknn_output` array (`n_model_output` elements), preventing the out-of-bounds read.
+  `RknnOutput` now holds the entire array and releases all outputs together on drop.
+- **`rknn_matmul_api.h`**: Added missing `RKNN_INT8_MM_INT4_TO_FLOAT16 = 15` enum variant
+  (present in upstream airockchip/rknn-toolkit2 but absent in previous releases).
+
 ## [v0.2.1]
 
 ### Added
